@@ -4,6 +4,14 @@ export interface ReferenceItem {
   doi: string;
   isVerified?: boolean;
   source?: 'regex' | 'ai' | 'official';
+  // APA 6 metadata
+  authors?: string[];
+  year?: string;
+  journal?: string;
+  volume?: string;
+  issue?: string;
+  pages?: string;
+  apa6?: string; // Pre-formatted APA 6 citation
 }
 
 export interface ExtractionResult {

@@ -148,14 +148,12 @@ const App: React.FC = () => {
             onReset={reset}
             copiedId={copiedId}
             onCopy={copyToClipboard}
-            generateBibTeX={generateBibTeX}
-            generateRIS={generateRIS}
             getSciHubLink={getSciHubLink}
             onOpenAll={openAllLinks}
             onDownloadFile={downloadFile}
-            onDownloadHtml={downloadHtmlBinder}
           />
         )}
+
       </main>
     </div>
   );

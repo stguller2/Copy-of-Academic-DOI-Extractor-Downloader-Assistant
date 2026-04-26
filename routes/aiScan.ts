@@ -155,54 +155,173 @@ router.get('/status', (req, res) => {
 });
 
 /**
- * Metadata Refinement (Official APIs)
- * Highly parallelized for SaaS speed
+ * APA 6th Edition Citation Formatter
+ * Format: Author, A. A., & Author, B. B. (Year). Title. Journal, volume(issue), pages. https://doi.org/xxx
+ */
+function formatAPA6(meta: {
+  title: string;
+  doi: string;
+  authors?: string[];
+  year?: string;
+  journal?: string;
+  volume?: string;
+  issue?: string;
+  pages?: string;
+}): string {
+  let citation = '';
+
+  // Authors
+  if (meta.authors && meta.authors.length > 0) {
+    if (meta.authors.length === 1) {
+      citation += meta.authors[0];
+    } else if (meta.authors.length === 2) {
+      citation += `${meta.authors[0]}, & ${meta.authors[1]}`;
+    } else if (meta.authors.length <= 7) {
+      const allButLast = meta.authors.slice(0, -1).join(', ');
+      citation += `${allButLast}, & ${meta.authors[meta.authors.length - 1]}`;
+    } else {
+      // APA 6: 7+ authors → first 6, ..., last
+      const firstSix = meta.authors.slice(0, 6).join(', ');
+      citation += `${firstSix}, . . . ${meta.authors[meta.authors.length - 1]}`;
+    }
+  }
+
+  // Year
+  citation += ` (${meta.year || 'n.d.'}).`;
+
+  // Title (sentence case, no italic for articles)
+  citation += ` ${meta.title}.`;
+
+  // Journal (italic in APA, we use plain text for copy)
+  if (meta.journal) {
+    citation += ` ${meta.journal}`;
+    if (meta.volume) {
+      citation += `, ${meta.volume}`;
+      if (meta.issue) {
+        citation += `(${meta.issue})`;
+      }
+    }
+    if (meta.pages) {
+      citation += `, ${meta.pages}`;
+    }
+    citation += '.';
+  }
+
+  // DOI
+  citation += ` https://doi.org/${meta.doi}`;
+
+  return citation.trim();
+}
+
+/**
+ * Extract author names in "Surname, I." format from Crossref data
+ */
+function parseCrossrefAuthors(authors: any[]): string[] {
+  if (!authors || !Array.isArray(authors)) return [];
+  return authors.map(a => {
+    const family = a.family || '';
+    const given = a.given || '';
+    if (!family) return given;
+    // Convert "John Michael" → "J. M."
+    const initials = given.split(/\s+/).map((n: string) => n.charAt(0).toUpperCase() + '.').join(' ');
+    return `${family}, ${initials}`;
+  });
+}
+
+/**
+ * Extract author names from OpenAlex data
+ */
+function parseOpenAlexAuthors(authorships: any[]): string[] {
+  if (!authorships || !Array.isArray(authorships)) return [];
+  return authorships.map(a => {
+    const name = a.author?.display_name || '';
+    if (!name) return '';
+    const parts = name.split(/\s+/);
+    if (parts.length === 1) return parts[0];
+    const surname = parts[parts.length - 1];
+    const initials = parts.slice(0, -1).map((n: string) => n.charAt(0).toUpperCase() + '.').join(' ');
+    return `${surname}, ${initials}`;
+  }).filter(Boolean);
+}
+
+/**
+ * Metadata Refinement + APA 6 Citation Generator
+ * Fetches full bibliographic data from OpenAlex & Crossref, then formats APA 6
  */
 router.post('/refine', async (req, res) => {
   try {
     const validated = RefineSchema.parse(req.body);
     
-    // Increase parallelism for SaaS speed, but keep a reasonable limit
     const cleanReferences = await Promise.all(validated.references
       .slice(0, 100)
       .map(async (ref) => {
         const cleanDoi = ref.doi.trim();
         
-        // Parallel check OpenAlex and Crossref
+        // Parallel fetch from both APIs
         const results = await Promise.allSettled([
-          axios.get(`https://api.openalex.org/works/https://doi.org/${encodeURIComponent(cleanDoi)}`, {
-            timeout: 4000,
+          axios.get(`https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`, {
+            timeout: 6000,
             headers: { 'User-Agent': 'AcademicDOIApp/1.0 (mailto:admin@doiscan.ai)' }
           }),
-          axios.get(`https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`, {
-            timeout: 4000,
+          axios.get(`https://api.openalex.org/works/https://doi.org/${encodeURIComponent(cleanDoi)}`, {
+            timeout: 6000,
             headers: { 'User-Agent': 'AcademicDOIApp/1.0 (mailto:admin@doiscan.ai)' }
           })
         ]);
 
-        for (const res of results) {
-          if (res.status === 'fulfilled') {
-            const data = res.value.data;
-            const title = data?.title || data?.message?.title?.[0];
-            if (title) return { 
-              title, 
-              doi: cleanDoi, 
-              isVerified: true, 
-              source: 'official' as const 
-            };
+        let title = ref.title;
+        let authors: string[] = [];
+        let year = '';
+        let journal = '';
+        let volume = '';
+        let issue = '';
+        let pages = '';
+        let isVerified = false;
+
+        // Try Crossref first (most complete metadata for APA)
+        if (results[0].status === 'fulfilled') {
+          const msg = results[0].value.data?.message;
+          if (msg) {
+            title = msg.title?.[0] || title;
+            authors = parseCrossrefAuthors(msg.author);
+            year = msg.published?.['date-parts']?.[0]?.[0]?.toString() 
+                || msg['published-print']?.['date-parts']?.[0]?.[0]?.toString()
+                || msg['published-online']?.['date-parts']?.[0]?.[0]?.toString()
+                || '';
+            journal = msg['container-title']?.[0] || '';
+            volume = msg.volume || '';
+            issue = msg.issue || '';
+            pages = msg.page || '';
+            isVerified = true;
           }
         }
 
+        // Fallback to OpenAlex if Crossref failed or missing authors
+        if (authors.length === 0 && results[1].status === 'fulfilled') {
+          const oaData = results[1].value.data;
+          if (oaData) {
+            title = oaData.title || title;
+            authors = parseOpenAlexAuthors(oaData.authorships);
+            year = year || oaData.publication_year?.toString() || '';
+            journal = journal || oaData.primary_location?.source?.display_name || '';
+            isVerified = true;
+          }
+        }
+
+        const meta = { title, doi: cleanDoi, authors, year, journal, volume, issue, pages };
+        const apa6 = formatAPA6(meta);
+
         return { 
-          title: ref.title, 
-          doi: cleanDoi, 
-          isVerified: false, 
-          source: 'ai' as const 
+          ...meta,
+          apa6,
+          isVerified, 
+          source: isVerified ? 'official' as const : 'ai' as const
         };
       }));
 
     res.json({ references: cleanReferences, skippedCount: 0 });
   } catch (error: any) {
+    logger.error({ error: error.message }, 'Refinement failed');
     res.status(500).json({ error: 'Refinement failed.' });
   }
 });
