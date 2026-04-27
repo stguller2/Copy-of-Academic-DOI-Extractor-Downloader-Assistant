@@ -400,7 +400,6 @@ router.post('/extract', async (req, res) => {
   }
 
   try {
-    // Add request to the processing queue
     const result = await aiQueue.add(async () => {
       const session = new LlamaChatSession({ 
         contextSequence: contextPtr!.getSequence() 
@@ -437,4 +436,273 @@ ${text.substring(0, 4000)}
   }
 });
 
+// ────────────────────────────────────────────────────────────────
+// NEW LLM FEATURE #1: DOI-less Reference Resolution
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * Search Crossref by bibliographic query to find a DOI
+ */
+async function searchCrossrefByQuery(query: string): Promise<{ doi: string; title: string; score: number } | null> {
+  try {
+    const res = await axios.get('https://api.crossref.org/works', {
+      params: {
+        'query.bibliographic': query,
+        rows: 1,
+        select: 'DOI,title,score'
+      },
+      timeout: 8000,
+      headers: { 'User-Agent': 'AcademicDOIApp/1.0 (mailto:admin@doiscan.ai)' }
+    });
+
+    const item = res.data?.message?.items?.[0];
+    if (item && item.score > 40) {
+      return {
+        doi: item.DOI,
+        title: item.title?.[0] || '',
+        score: item.score
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+const ResolveDOIlessSchema = z.object({
+  citations: z.array(z.string()),  // Raw citation text strings
+  fullText: z.string().optional()   // Optional: full paper text for context
+});
+
+/**
+ * POST /api/ai/resolve-doiless
+ * 
+ * Takes raw citation text (without DOIs) and:
+ * 1. Uses LLM to extract structured metadata (author, title, year, journal)
+ * 2. Searches Crossref with extracted metadata to find actual DOIs
+ * 3. Returns resolved references with DOIs
+ * 
+ * This is the key LLM value-add: converting unstructured citation text → DOIs
+ */
+router.post('/resolve-doiless', async (req, res) => {
+  if (initStatus !== 'ready' || !contextPtr) {
+    return res.status(503).json({ error: 'AI model is loading' });
+  }
+
+  try {
+    const validated = ResolveDOIlessSchema.parse(req.body);
+    const citations = validated.citations.slice(0, 20); // Limit to 20
+    
+    logger.info({ count: citations.length }, 'Resolving DOI-less citations with LLM');
+    
+    const resolved: Array<{
+      originalText: string;
+      title: string;
+      authors: string;
+      year: string;
+      journal: string;
+      doi: string | null;
+      confidence: number;
+      source: 'ai-resolved';
+    }> = [];
+
+    // Process each citation through the LLM
+    for (const citationText of citations) {
+      try {
+        const parsed = await aiQueue.add(async () => {
+          const session = new LlamaChatSession({ 
+            contextSequence: contextPtr!.getSequence() 
+          });
+          
+          const prompt = `### INSTRUCTION:
+Parse this academic citation into structured parts.
+Return ONLY valid JSON with these fields:
+- title: the paper title
+- authors: first author surname
+- year: publication year (4 digits)
+- journal: journal name abbreviation
+
+### CITATION:
+${citationText.substring(0, 500)}
+
+### JSON:`;
+          
+          const aiResponse = await session.prompt(prompt, { 
+            maxTokens: 300, 
+            temperature: 0.1,
+            repeatPenalty: { penalty: 1.2 }
+          });
+
+          const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) return null;
+          return JSON.parse(jsonMatch[0]);
+        });
+
+        if (parsed && parsed.title) {
+          // Build a search query from LLM-extracted metadata
+          const searchQuery = [
+            parsed.authors || '',
+            parsed.title || '',
+            parsed.year || '',
+            parsed.journal || ''
+          ].filter(Boolean).join(' ');
+
+          // Search Crossref for the actual DOI
+          const crossrefResult = await searchCrossrefByQuery(searchQuery);
+          
+          resolved.push({
+            originalText: citationText.substring(0, 200),
+            title: crossrefResult?.title || parsed.title,
+            authors: parsed.authors || '',
+            year: parsed.year || '',
+            journal: parsed.journal || '',
+            doi: crossrefResult?.doi || null,
+            confidence: crossrefResult ? Math.min(crossrefResult.score / 100, 1) : 0.3,
+            source: 'ai-resolved'
+          });
+        }
+      } catch (err: any) {
+        logger.debug({ citation: citationText.substring(0, 80), error: err.message }, 'Failed to resolve citation');
+      }
+    }
+
+    const withDoi = resolved.filter(r => r.doi);
+    logger.info({ 
+      total: citations.length, 
+      resolved: withDoi.length 
+    }, 'DOI-less resolution complete');
+
+    res.json({ 
+      resolved, 
+      stats: { 
+        total: citations.length, 
+        withDoi: withDoi.length, 
+        withoutDoi: resolved.length - withDoi.length 
+      }
+    });
+  } catch (error: any) {
+    logger.error({ error: error.message }, 'DOI-less resolution failed');
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────
+// NEW LLM FEATURE #2: Citation Context Extraction
+// ────────────────────────────────────────────────────────────────
+
+const CitationContextSchema = z.object({
+  fullText: z.string(),
+  references: z.array(z.object({
+    doi: z.string(),
+    title: z.string()
+  }))
+});
+
+/**
+ * POST /api/ai/citation-context
+ * 
+ * For each reference, finds WHERE it's cited in the paper body 
+ * and extracts a brief context explaining WHY it was cited.
+ * 
+ * Example output:
+ * "Cited in Section 3.2: Previous studies showed that sludge 
+ *  accumulation significantly reduces hydraulic conductivity [5]"
+ */
+router.post('/citation-context', async (req, res) => {
+  if (initStatus !== 'ready' || !contextPtr) {
+    return res.status(503).json({ error: 'AI model is loading' });
+  }
+
+  try {
+    const validated = CitationContextSchema.parse(req.body);
+    const { fullText, references } = validated;
+    
+    logger.info({ refCount: references.length }, 'Extracting citation contexts');
+    
+    const contexts: Array<{
+      doi: string;
+      context: string;
+      section: string;
+    }> = [];
+
+    // For each reference, find context in the paper text
+    for (const ref of references.slice(0, 15)) { // Limit to 15
+      try {
+        // Search for the DOI or title fragment in the text
+        const searchTerms = [
+          ref.doi,
+          ref.title.split(' ').slice(0, 5).join(' ') // First 5 words of title
+        ];
+
+        let contextWindow = '';
+        for (const term of searchTerms) {
+          const idx = fullText.indexOf(term);
+          if (idx !== -1) {
+            // Extract ~300 chars around the citation
+            const start = Math.max(0, idx - 200);
+            const end = Math.min(fullText.length, idx + 200);
+            contextWindow = fullText.substring(start, end);
+            break;
+          }
+        }
+
+        if (!contextWindow) {
+          // Try fuzzy match with author surname from title
+          const words = ref.title.split(/\s+/);
+          for (const word of words) {
+            if (word.length > 5) {
+              const idx = fullText.indexOf(word);
+              if (idx !== -1 && idx < fullText.length - 500) { // Not in bibliography
+                contextWindow = fullText.substring(
+                  Math.max(0, idx - 150), 
+                  Math.min(fullText.length, idx + 200)
+                );
+                break;
+              }
+            }
+          }
+        }
+
+        if (contextWindow) {
+          // Use LLM to summarize the citation context
+          const summary = await aiQueue.add(async () => {
+            const session = new LlamaChatSession({ 
+              contextSequence: contextPtr!.getSequence() 
+            });
+            
+            const prompt = `### INSTRUCTION:
+Given this text from a research paper, write ONE sentence explaining why "${ref.title.substring(0, 60)}" is being cited.
+Return ONLY the summary sentence, nothing else.
+
+### TEXT:
+${contextWindow.substring(0, 600)}
+
+### SUMMARY:`;
+            
+            return session.prompt(prompt, { 
+              maxTokens: 100, 
+              temperature: 0.2,
+              repeatPenalty: { penalty: 1.2 }
+            });
+          });
+
+          contexts.push({
+            doi: ref.doi,
+            context: (summary || '').trim().substring(0, 200),
+            section: 'Body'
+          });
+        }
+      } catch (err: any) {
+        logger.debug({ doi: ref.doi, error: err.message }, 'Context extraction failed for ref');
+      }
+    }
+
+    res.json({ contexts });
+  } catch (error: any) {
+    logger.error({ error: error.message }, 'Citation context extraction failed');
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
+

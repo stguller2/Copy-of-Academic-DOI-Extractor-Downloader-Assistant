@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Copy, ExternalLink, ClipboardCheck, BookOpen, Globe, AlertTriangle } from 'lucide-react';
+import { Download, Copy, ExternalLink, ClipboardCheck, BookOpen, Globe, AlertTriangle, Loader2 } from 'lucide-react';
 import { Button } from './Button';
 import { ReferenceItem, CopiedState } from '../types';
 import DOMPurify from 'dompurify';
@@ -23,35 +23,41 @@ export const ReferenceCard: React.FC<ReferenceCardProps> = ({
   const doiId = `doi-${index}`;
   const [downloadError, setDownloadError] = useState(false);
 
+  const [isDownloading, setIsDownloading] = useState(false);
+
   const handleDownload = async (e: React.MouseEvent) => {
     e.preventDefault();
     setDownloadError(false);
+    setIsDownloading(true);
     
     const downloadUrl = getSciHubLink(item.doi);
     
     try {
-      // Try to fetch - if it returns JSON error, show fallback
       const res = await fetch(downloadUrl);
       const contentType = res.headers.get('content-type') || '';
       
-      if (contentType.includes('application/pdf') || contentType.includes('octet-stream')) {
-        // Success - trigger download
+      if (res.ok && (contentType.includes('application/pdf') || contentType.includes('octet-stream'))) {
+        // Success - create blob and trigger download
         const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
+        const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url;
+        a.href = blobUrl;
         a.download = `${item.doi.replace(/\//g, '_')}.pdf`;
+        document.body.appendChild(a);
         a.click();
-        URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        // Delay revoking so the browser has time to start the download
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
       } else {
-        // Server returned an error or HTML
+        // Server returned an error or non-PDF
         setDownloadError(true);
-        // Open DOI.org as fallback
         window.open(`https://doi.org/${item.doi}`, '_blank');
       }
     } catch (err) {
       setDownloadError(true);
       window.open(`https://doi.org/${item.doi}`, '_blank');
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -92,10 +98,16 @@ export const ReferenceCard: React.FC<ReferenceCardProps> = ({
         <div className="flex flex-col gap-2 shrink-0">
           <button 
             onClick={handleDownload}
-            className="flex items-center gap-2 py-3 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-lg shadow-indigo-100 transition-all active:scale-95 cursor-pointer"
+            disabled={isDownloading}
+            className={`flex items-center gap-2 py-3 px-6 rounded-2xl text-white font-bold text-sm shadow-lg shadow-indigo-100 transition-all active:scale-95 cursor-pointer ${
+              isDownloading ? 'bg-indigo-400 cursor-wait' : 'bg-indigo-600 hover:bg-indigo-700'
+            }`}
           >
-            <Download size={18} />
-            <span>Download PDF</span>
+            {isDownloading ? (
+              <><Loader2 size={18} className="animate-spin" /><span>Downloading...</span></>
+            ) : (
+              <><Download size={18} /><span>Download PDF</span></>
+            )}
           </button>
           <a 
             href={`https://doi.org/${item.doi}`} 
