@@ -1,5 +1,5 @@
-import React from 'react';
-import { Download, Copy, ExternalLink, ClipboardCheck, BookOpen } from 'lucide-react';
+import React, { useState } from 'react';
+import { Download, Copy, ExternalLink, ClipboardCheck, BookOpen, Globe, AlertTriangle } from 'lucide-react';
 import { Button } from './Button';
 import { ReferenceItem, CopiedState } from '../types';
 import DOMPurify from 'dompurify';
@@ -21,6 +21,39 @@ export const ReferenceCard: React.FC<ReferenceCardProps> = ({
 }) => {
   const apaId = `apa-${index}`;
   const doiId = `doi-${index}`;
+  const [downloadError, setDownloadError] = useState(false);
+
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    setDownloadError(false);
+    
+    const downloadUrl = getSciHubLink(item.doi);
+    
+    try {
+      // Try to fetch - if it returns JSON error, show fallback
+      const res = await fetch(downloadUrl);
+      const contentType = res.headers.get('content-type') || '';
+      
+      if (contentType.includes('application/pdf') || contentType.includes('octet-stream')) {
+        // Success - trigger download
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${item.doi.replace(/\//g, '_')}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        // Server returned an error or HTML
+        setDownloadError(true);
+        // Open DOI.org as fallback
+        window.open(`https://doi.org/${item.doi}`, '_blank');
+      }
+    } catch (err) {
+      setDownloadError(true);
+      window.open(`https://doi.org/${item.doi}`, '_blank');
+    }
+  };
 
   return (
     <div className="bg-white p-8 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl hover:border-indigo-100 transition-all flex flex-col gap-5 group">
@@ -55,19 +88,37 @@ export const ReferenceCard: React.FC<ReferenceCardProps> = ({
           )}
         </div>
         
-        {/* Download Button */}
-        <a 
-          href={getSciHubLink(item.doi)} 
-          target="_blank" 
-          rel="noopener noreferrer"
-          className="shrink-0"
-        >
-          <Button variant="primary" className="py-3 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-transform active:scale-95">
+        {/* Download Buttons */}
+        <div className="flex flex-col gap-2 shrink-0">
+          <button 
+            onClick={handleDownload}
+            className="flex items-center gap-2 py-3 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-lg shadow-indigo-100 transition-all active:scale-95 cursor-pointer"
+          >
             <Download size={18} />
             <span>Download PDF</span>
-          </Button>
-        </a>
+          </button>
+          <a 
+            href={`https://doi.org/${item.doi}`} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 py-2 px-4 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-indigo-600 font-medium text-xs transition-colors text-center justify-center border border-slate-100"
+          >
+            <Globe size={14} />
+            <span>DOI.org (Publisher)</span>
+          </a>
+        </div>
       </div>
+
+      {/* Download fallback notice */}
+      {downloadError && (
+        <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 flex items-center gap-3 text-amber-700 text-sm animate-in fade-in duration-300">
+          <AlertTriangle size={16} className="shrink-0" />
+          <span>
+            Automated download unavailable — opened publisher page instead. 
+            Try <a href={`https://scholar.google.com/scholar?q=${encodeURIComponent(item.doi)}`} target="_blank" rel="noopener noreferrer" className="underline font-bold hover:text-amber-900">Google Scholar</a> for alternative links.
+          </span>
+        </div>
+      )}
 
       {/* APA 6 Citation Block */}
       {item.apa6 && (
@@ -108,13 +159,13 @@ export const ReferenceCard: React.FC<ReferenceCardProps> = ({
           </button>
         </span>
         <a 
-          href={`https://doi.org/${item.doi}`} 
+          href={`https://scholar.google.com/scholar?q=${encodeURIComponent(item.doi)}`} 
           target="_blank" 
           rel="noopener noreferrer"
         >
-          <Button variant="ghost" className="py-1.5 px-3 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 text-xs" title="Open DOI.org page">
+          <Button variant="ghost" className="py-1.5 px-3 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 text-xs" title="Search on Google Scholar">
             <ExternalLink size={14} />
-            <span>DOI.org</span>
+            <span>Google Scholar</span>
           </Button>
         </a>
       </div>

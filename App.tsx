@@ -48,7 +48,7 @@ const App: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const getSciHubLink = (doi: string) => `/api/scihub/download/${encodeURIComponent(doi)}`;
+  const getSciHubLink = (doi: string) => `/api/scihub/download/${doi}`;
 
   const copyAllReferences = () => {
     if (!result) return;

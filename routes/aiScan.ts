@@ -255,79 +255,130 @@ function parseOpenAlexAuthors(authorships: any[]): string[] {
 }
 
 /**
+ * Fetch metadata for a single DOI with controlled concurrency.
+ * Returns enriched reference data with APA 6 citation.
+ */
+async function fetchSingleDOIMetadata(ref: { title: string; doi: string }): Promise<any> {
+  const cleanDoi = ref.doi.trim();
+  
+  // Parallel fetch from both APIs
+  const results = await Promise.allSettled([
+    axios.get(`https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`, {
+      timeout: 10000,
+      headers: { 'User-Agent': 'AcademicDOIApp/1.0 (mailto:admin@doiscan.ai)' }
+    }),
+    axios.get(`https://api.openalex.org/works/https://doi.org/${encodeURIComponent(cleanDoi)}`, {
+      timeout: 10000,
+      headers: { 'User-Agent': 'AcademicDOIApp/1.0 (mailto:admin@doiscan.ai)' }
+    })
+  ]);
+
+  let title = ref.title;
+  let authors: string[] = [];
+  let year = '';
+  let journal = '';
+  let volume = '';
+  let issue = '';
+  let pages = '';
+  let isVerified = false;
+
+  // Try Crossref first (most complete metadata for APA)
+  if (results[0].status === 'fulfilled') {
+    const msg = results[0].value.data?.message;
+    if (msg) {
+      title = msg.title?.[0] || title;
+      authors = parseCrossrefAuthors(msg.author);
+      year = msg.published?.['date-parts']?.[0]?.[0]?.toString() 
+          || msg['published-print']?.['date-parts']?.[0]?.[0]?.toString()
+          || msg['published-online']?.['date-parts']?.[0]?.[0]?.toString()
+          || '';
+      journal = msg['container-title']?.[0] || '';
+      volume = msg.volume || '';
+      issue = msg.issue || '';
+      pages = msg.page || '';
+      isVerified = true;
+    }
+  }
+
+  // Fallback to OpenAlex if Crossref failed or missing authors
+  if (authors.length === 0 && results[1].status === 'fulfilled') {
+    const oaData = results[1].value.data;
+    if (oaData) {
+      title = oaData.title || title;
+      authors = parseOpenAlexAuthors(oaData.authorships);
+      year = year || oaData.publication_year?.toString() || '';
+      journal = journal || oaData.primary_location?.source?.display_name || '';
+      isVerified = true;
+    }
+  }
+
+  // Even if only OpenAlex worked, fill in what we can
+  if (!isVerified && results[1].status === 'fulfilled') {
+    const oaData = results[1].value.data;
+    if (oaData) {
+      title = oaData.title || title;
+      year = oaData.publication_year?.toString() || '';
+      journal = oaData.primary_location?.source?.display_name || '';
+      isVerified = true;
+    }
+  }
+
+  const meta = { title, doi: cleanDoi, authors, year, journal, volume, issue, pages };
+  const apa6 = formatAPA6(meta);
+
+  return { 
+    ...meta,
+    apa6,
+    isVerified, 
+    source: isVerified ? 'official' as const : 'regex' as const
+  };
+}
+
+/**
+ * Process DOIs in controlled batches to avoid overwhelming the APIs
+ */
+async function processInBatches<T>(
+  items: any[], 
+  processor: (item: any) => Promise<T>, 
+  batchSize: number = 5
+): Promise<T[]> {
+  const results: T[] = [];
+  
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(processor));
+    results.push(...batchResults);
+    
+    // Small delay between batches to be polite to APIs
+    if (i + batchSize < items.length) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+  }
+  
+  return results;
+}
+
+/**
  * Metadata Refinement + APA 6 Citation Generator
- * Fetches full bibliographic data from OpenAlex & Crossref, then formats APA 6
+ * Fetches full bibliographic data from OpenAlex & Crossref, then formats APA 6.
+ * 
+ * This endpoint works INDEPENDENTLY of the LLM — it only needs DOIs.
  */
 router.post('/refine', async (req, res) => {
   try {
     const validated = RefineSchema.parse(req.body);
     
-    const cleanReferences = await Promise.all(validated.references
-      .slice(0, 100)
-      .map(async (ref) => {
-        const cleanDoi = ref.doi.trim();
-        
-        // Parallel fetch from both APIs
-        const results = await Promise.allSettled([
-          axios.get(`https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`, {
-            timeout: 6000,
-            headers: { 'User-Agent': 'AcademicDOIApp/1.0 (mailto:admin@doiscan.ai)' }
-          }),
-          axios.get(`https://api.openalex.org/works/https://doi.org/${encodeURIComponent(cleanDoi)}`, {
-            timeout: 6000,
-            headers: { 'User-Agent': 'AcademicDOIApp/1.0 (mailto:admin@doiscan.ai)' }
-          })
-        ]);
+    logger.info({ count: validated.references.length }, 'Refining references with metadata APIs');
+    
+    // Process in batches of 5 to avoid API throttling
+    const cleanReferences = await processInBatches(
+      validated.references.slice(0, 100),
+      fetchSingleDOIMetadata,
+      5
+    );
 
-        let title = ref.title;
-        let authors: string[] = [];
-        let year = '';
-        let journal = '';
-        let volume = '';
-        let issue = '';
-        let pages = '';
-        let isVerified = false;
-
-        // Try Crossref first (most complete metadata for APA)
-        if (results[0].status === 'fulfilled') {
-          const msg = results[0].value.data?.message;
-          if (msg) {
-            title = msg.title?.[0] || title;
-            authors = parseCrossrefAuthors(msg.author);
-            year = msg.published?.['date-parts']?.[0]?.[0]?.toString() 
-                || msg['published-print']?.['date-parts']?.[0]?.[0]?.toString()
-                || msg['published-online']?.['date-parts']?.[0]?.[0]?.toString()
-                || '';
-            journal = msg['container-title']?.[0] || '';
-            volume = msg.volume || '';
-            issue = msg.issue || '';
-            pages = msg.page || '';
-            isVerified = true;
-          }
-        }
-
-        // Fallback to OpenAlex if Crossref failed or missing authors
-        if (authors.length === 0 && results[1].status === 'fulfilled') {
-          const oaData = results[1].value.data;
-          if (oaData) {
-            title = oaData.title || title;
-            authors = parseOpenAlexAuthors(oaData.authorships);
-            year = year || oaData.publication_year?.toString() || '';
-            journal = journal || oaData.primary_location?.source?.display_name || '';
-            isVerified = true;
-          }
-        }
-
-        const meta = { title, doi: cleanDoi, authors, year, journal, volume, issue, pages };
-        const apa6 = formatAPA6(meta);
-
-        return { 
-          ...meta,
-          apa6,
-          isVerified, 
-          source: isVerified ? 'official' as const : 'ai' as const
-        };
-      }));
+    const verifiedCount = cleanReferences.filter(r => r.isVerified).length;
+    logger.info({ total: cleanReferences.length, verified: verifiedCount }, 'Refinement complete');
 
     res.json({ references: cleanReferences, skippedCount: 0 });
   } catch (error: any) {
