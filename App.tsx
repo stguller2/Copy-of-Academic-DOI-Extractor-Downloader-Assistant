@@ -14,7 +14,7 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { AppState, ReferenceItem } from './types';
+import { AppState } from './types';
 import { Button } from './components/Button';
 import { useExtraction } from './hooks/useExtraction';
 import { UploadZone } from './components/UploadZone';
@@ -38,17 +38,6 @@ const App: React.FC = () => {
 
   const [showHelp, setShowHelp] = useState(false);
 
-  // BibTeX Generation
-  const generateBibTeX = (item: ReferenceItem) => {
-    const key = item.title.split(' ')[0].toLowerCase().replace(/[^a-z]/g, '') + new Date().getFullYear();
-    return `@article{${key},\n  title = {${item.title}},\n  doi = {${item.doi}},\n  url = {https://doi.org/${item.doi}},\n  journal = {Extracted via Academic DOI Linker}\n}`;
-  };
-
-  // RIS Generation
-  const generateRIS = (item: ReferenceItem) => {
-    return `TY  - JOUR\nTI  - ${item.title}\nDO  - ${item.doi}\nUR  - https://doi.org/${item.doi}\nER  - `;
-  };
-
   const downloadFile = (content: string, filename: string, type: string) => {
     const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
@@ -63,28 +52,19 @@ const App: React.FC = () => {
 
   const copyAllReferences = () => {
     if (!result) return;
-    const text = result.references.map((r, i) => `${i + 1}. ${r.title}\nDOI: ${r.doi}\nURL: https://doi.org/${r.doi}`).join('\n\n');
+    const text = result.references
+      .map(r => r.apa6 || `${r.title}. https://doi.org/${r.doi}`)
+      .join('\n\n');
     copyToClipboard(text, 'copy-all');
   };
 
   const openAllLinks = () => {
     if (!result || result.references.length === 0) return;
-    const count = result.references.length;
-    const confirmMessage = `IMPORTANT: This will attempt to open ${count} new tabs.\n\nMost browsers will BLOCK these pop-ups. Please select "Always allow" for this site.\n\nDo you want to proceed?`;
-
-    if (window.confirm(confirmMessage)) {
+    if (window.confirm(`Open ${result.references.length} download tabs?`)) {
       result.references.forEach((item, index) => {
-        setTimeout(() => {
-          window.open(getSciHubLink(item.doi), '_blank');
-        }, index * 600);
+        setTimeout(() => window.open(getSciHubLink(item.doi), '_blank'), index * 600);
       });
     }
-  };
-
-  const downloadHtmlBinder = () => {
-    if (!result) return;
-    const htmlContent = `<!DOCTYPE html><html><head><title>Research Dashboard</title><style>body { font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 0 20px; background: #f9fafb; }.card { background: white; border: 1px solid #e5e7eb; padding: 20px; border-radius: 12px; margin-bottom: 16px; }.title { font-weight: bold; color: #4f46e5; text-decoration: none; }.btn { display: inline-block; background: #4f46e5; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; margin-top: 10px; }</style></head><body><h1>${result.paperTitle || 'Research References'}</h1>${result.references.map(r => `<div class="card"><a href="https://doi.org/${r.doi}" class="title" target="_blank">${r.title}</a><p>DOI: ${r.doi}</p><a href="${getSciHubLink(r.doi)}" class="btn" target="_blank">Download Full Text</a></div>`).join('')}</body></html>`;
-    downloadFile(htmlContent, 'Research_Dashboard.html', 'text/html');
   };
 
   return (

@@ -39,11 +39,6 @@ app.use('/api/scihub', scihubProxy);
 app.use('/api/ai', aiScan);
 app.use('/api/export', exportRouter);
 
-// API 404 Handler - MUST be after all API routers but before the static/Vite part
-app.use('/api/*', (req, res) => {
-  res.status(404).json({ error: `API route not found: ${req.originalUrl}` });
-});
-
 // Health Check
 app.get('/api/health', (req, res) => {
   res.json({ status: "ok", version: "1.0.0" });
@@ -60,7 +55,10 @@ app.get('/api/metrics', (req, res) => {
   res.json({ uptime: process.uptime(), memory: process.memoryUsage() });
 });
 
-// 5. Global Error Handler
+// API 404 Handler - MUST be after all API routes
+app.use('/api/*', (req, res) => {
+  res.status(404).json({ error: `API route not found: ${req.originalUrl}` });
+});
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   const errorId = req.id || 'unknown';
   logger.error({ error_id: errorId, message: err.message, stack: env.NODE_ENV === 'development' ? err.stack : undefined }, 'Unhandled Error');
