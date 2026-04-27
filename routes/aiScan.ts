@@ -105,23 +105,33 @@ export async function initializeLocalModel() {
     }
 
     initStatus = 'loading';
-    logger.info('SaaS-Engine: Loading model with Metal/GPU acceleration...');
+    logger.info('SaaS-Engine: Loading model (auto-detect: CUDA / CPU / Metal)...');
     
+    // node-llama-cpp auto-detects the best backend:
+    // Linux + NVIDIA GPU → CUDA
+    // Linux without GPU  → CPU
+    // macOS Apple Silicon → Metal
     const llama = await getLlama();
     
-    // explicit GPU optimization for Mac (Metal)
+    // GPU_LAYERS env var: set to 0 for CPU-only, or a number for GPU offload
+    // Default: "auto" lets node-llama-cpp decide based on available hardware
+    const gpuLayersEnv = process.env.GPU_LAYERS;
+    const gpuLayers = gpuLayersEnv === undefined ? "auto" 
+                    : gpuLayersEnv === "auto" ? "auto" 
+                    : parseInt(gpuLayersEnv, 10);
+    
     modelPtr = await llama.loadModel({ 
       modelPath: MODEL_PATH,
-      gpuLayers: 32 // Move all layers to GPU if possible
+      gpuLayers: gpuLayers
     });
     
     contextPtr = await modelPtr.createContext({ 
-      contextSize: 4096 // Increased for better extraction context
+      contextSize: 4096
     });
     
     initStatus = 'ready';
-    initRetries = 0; // Reset retries on success
-    logger.info('SaaS-Engine: Local AI is RESIDENT and optimized for high-concurrency.');
+    initRetries = 0;
+    logger.info({ gpuLayers }, 'SaaS-Engine: Local AI is RESIDENT. Hardware acceleration active.');
   } catch (err: any) {
     initStatus = 'error';
     errorMessage = err.message;
