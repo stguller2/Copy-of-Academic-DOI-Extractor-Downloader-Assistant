@@ -37,19 +37,24 @@ export const ReferenceCard: React.FC<ReferenceCardProps> = ({
       const contentType = res.headers.get('content-type') || '';
       
       if (res.ok && (contentType.includes('application/pdf') || contentType.includes('octet-stream'))) {
-        // Success - create blob and trigger download
-        const blob = await res.blob();
-        const blobUrl = URL.createObjectURL(blob);
+        // Read the raw bytes, then re-wrap as a PDF blob with explicit MIME type
+        const arrayBuffer = await res.arrayBuffer();
+        const pdfBlob = new Blob([arrayBuffer], { type: 'application/pdf' });
+        const blobUrl = URL.createObjectURL(pdfBlob);
+        
+        const filename = `${item.doi.replace(/\//g, '_')}.pdf`;
+        
         const a = document.createElement('a');
         a.href = blobUrl;
-        a.download = `${item.doi.replace(/\//g, '_')}.pdf`;
+        a.download = filename;
+        a.type = 'application/pdf';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        // Delay revoking so the browser has time to start the download
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        
+        // Give the browser time to start the download before revoking
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
       } else {
-        // Server returned an error or non-PDF
         setDownloadError(true);
         window.open(`https://doi.org/${item.doi}`, '_blank');
       }
