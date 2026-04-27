@@ -10,8 +10,8 @@ import { logger } from '../middleware/logging';
 const router = express.Router();
 
 const MODEL_DIR = path.join(process.cwd(), "models");
-const MODEL_PATH = path.join(MODEL_DIR, "bonsai-1.7b-q1_0.gguf");
-const MODEL_URL = "https://huggingface.co/prism-ml/Bonsai-1.7B-gguf/resolve/main/Bonsai-1.7B-q1_0.gguf";
+const MODEL_PATH = path.join(MODEL_DIR, "smollm2-1.7b-instruct-q4_k_m.gguf");
+const MODEL_URL = "https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF/resolve/main/SmolLM2-1.7B-Instruct-Q4_K_M.gguf";
 
 let modelPtr: LlamaModel | null = null;
 let contextPtr: LlamaContext | null = null;

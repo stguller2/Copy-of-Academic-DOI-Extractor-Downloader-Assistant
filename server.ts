@@ -55,8 +55,8 @@ app.get('/api/metrics', (req, res) => {
   res.json({ uptime: process.uptime(), memory: process.memoryUsage() });
 });
 
-// API 404 Handler - MUST be after all API routes
-app.use('/api/*', (req, res) => {
+// API 404 Handler - Express 5 syntax (named wildcard)
+app.use('/api/{*path}', (req, res) => {
   res.status(404).json({ error: `API route not found: ${req.originalUrl}` });
 });
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
