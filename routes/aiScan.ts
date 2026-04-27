@@ -113,11 +113,10 @@ export async function initializeLocalModel() {
     // macOS Apple Silicon → Metal
     const llama = await getLlama();
     
-    // GPU_LAYERS env var: set to 0 for CPU-only, or a number for GPU offload
-    // Default: "auto" lets node-llama-cpp decide based on available hardware
+    // GPU_LAYERS env var: default 0 (CPU-only, no GPU required)
     const gpuLayersEnv = process.env.GPU_LAYERS;
-    const gpuLayers = gpuLayersEnv === undefined ? "auto" 
-                    : gpuLayersEnv === "auto" ? "auto" 
+    const gpuLayers = gpuLayersEnv === undefined ? 0 
+                    : gpuLayersEnv === "auto" ? "auto" as const
                     : parseInt(gpuLayersEnv, 10);
     
     modelPtr = await llama.loadModel({ 
@@ -125,8 +124,9 @@ export async function initializeLocalModel() {
       gpuLayers: gpuLayers
     });
     
+    // CPU-only: smaller context = faster inference
     contextPtr = await modelPtr.createContext({ 
-      contextSize: 4096
+      contextSize: 2048
     });
     
     initStatus = 'ready';
