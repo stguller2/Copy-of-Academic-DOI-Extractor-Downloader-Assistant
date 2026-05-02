@@ -30,37 +30,33 @@ export const ReferenceCard: React.FC<ReferenceCardProps> = ({
     setDownloadError(false);
     setIsDownloading(true);
     
-    const downloadUrl = getSciHubLink(item.doi);
-    
     try {
-      const res = await fetch(downloadUrl);
-      const contentType = res.headers.get('content-type') || '';
+      const response = await fetch(getSciHubLink(item.doi));
       
-      if (res.ok && (contentType.includes('application/pdf') || contentType.includes('octet-stream'))) {
-        // Read the raw bytes, then re-wrap as a PDF blob with explicit MIME type
-        const arrayBuffer = await res.arrayBuffer();
-        const pdfBlob = new Blob([arrayBuffer], { type: 'application/pdf' });
-        const blobUrl = URL.createObjectURL(pdfBlob);
-        
-        const filename = `${item.doi.replace(/\//g, '_')}.pdf`;
-        
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = filename;
-        a.type = 'application/pdf';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        
-        // Give the browser time to start the download before revoking
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-      } else {
+      if (!response.ok) {
         setDownloadError(true);
-        window.open(`https://doi.org/${item.doi}`, '_blank');
+        setIsDownloading(false);
+        return;
       }
-    } catch (err) {
+      
+      // Fetch the complete file into memory to ensure it isn't truncated
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      
+      // Use standard anchor download approach to guarantee file extension
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = `${item.doi.replace(/\//g, '_')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      
+      // Cleanup
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Download failed:", error);
       setDownloadError(true);
-      window.open(`https://doi.org/${item.doi}`, '_blank');
     } finally {
       setIsDownloading(false);
     }

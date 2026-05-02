@@ -83,7 +83,7 @@ async function startServer() {
     app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
-  app.listen(env.PORT, "0.0.0.0", () => {
+  app.listen(env.PORT, () => {
     logger.info({ port: env.PORT, env: env.NODE_ENV }, 'Server started');
     // Start background model initialization
     initializeLocalModel().catch(err => logger.error({ err }, 'Background Init Failed'));

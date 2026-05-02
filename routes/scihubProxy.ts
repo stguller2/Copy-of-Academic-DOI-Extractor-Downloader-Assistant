@@ -168,7 +168,7 @@ async function trySciHubHTML(doi: string): Promise<string | null> {
 }
 
 /**
- * Stream a PDF from a URL to the Express response.
+ * Download and validate a PDF from a URL, then send it to the Express response.
  */
 async function streamPdf(pdfUrl: string, doi: string, res: express.Response): Promise<boolean> {
   try {
@@ -176,7 +176,7 @@ async function streamPdf(pdfUrl: string, doi: string, res: express.Response): Pr
       method: 'get',
       url: pdfUrl,
       timeout: 20000,
-      responseType: 'stream',
+      responseType: 'arraybuffer', // Load into memory to check magic bytes
       maxRedirects: 5,
       headers: {
         'User-Agent': BROWSER_UA,
@@ -187,23 +187,30 @@ async function streamPdf(pdfUrl: string, doi: string, res: express.Response): Pr
 
     const contentType = pdfResponse.headers['content-type'] || '';
     
-    // Accept PDF or octet-stream
-    if (contentType.includes('pdf') || contentType.includes('octet-stream')) {
-      res.setHeader('Content-Type', 'application/pdf');
-      if (pdfResponse.headers['content-length']) {
-        res.setHeader('Content-Length', pdfResponse.headers['content-length']);
-      }
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('Content-Disposition', `attachment; filename="${doi.replace(/\//g, '_')}.pdf"`);
-      
-      pdfResponse.data.pipe(res);
-      return true;
+    // Quick content-type heuristic
+    if (!contentType.includes('pdf') && !contentType.includes('octet-stream')) {
+      logger.debug({ pdfUrl, contentType }, 'URL did not return PDF content-type');
+      return false;
     }
+
+    const data = Buffer.from(pdfResponse.data);
     
-    logger.debug({ pdfUrl, contentType }, 'URL did not return PDF content-type');
-    return false;
+    // Magic Byte Validation (%PDF-)
+    if (data.length < 5 || data.toString('utf8', 0, 5) !== '%PDF-') {
+      logger.warn({ pdfUrl, doi }, 'Downloaded file failed magic byte validation (not a PDF)');
+      return false;
+    }
+
+    // Valid PDF, send it to the client
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Length', data.length.toString());
+    res.setHeader('Content-Disposition', `attachment; filename="${doi.replace(/\//g, '_')}.pdf"`);
+    
+    res.send(data);
+    return true;
   } catch (err: any) {
-    logger.debug({ pdfUrl, error: err.message }, 'PDF stream failed');
+    logger.debug({ pdfUrl, error: err.message }, 'PDF download failed');
     return false;
   }
 }
