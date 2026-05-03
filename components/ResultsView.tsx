@@ -1,20 +1,24 @@
-import React from 'react';
-import { 
-  CheckCircle2, 
-  ClipboardCheck, 
-  Copy, 
-  Trash2, 
-  Info, 
-  ShieldCheck, 
-  AlertCircle, 
-  Library, 
-  Zap, 
-  Layers, 
-  BookOpen, 
-  Share2, 
+import React, { useState, useMemo } from 'react';
+import {
+  CheckCircle2,
+  ClipboardCheck,
+  Copy,
+  Trash2,
+  Info,
+  ShieldCheck,
+  AlertCircle,
+  Library,
+  Zap,
+  Layers,
+  BookOpen,
+  Share2,
   Download,
   ExternalLink as OpenIcon,
-  FileText
+  FileText,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react';
 import { Button } from './Button';
 import { ReferenceCard } from './ReferenceCard';
@@ -32,6 +36,8 @@ interface ResultsViewProps {
   onDownloadFile: (content: string, filename: string, type: string) => void;
 }
 
+const ITEMS_PER_PAGE = 10;
+
 export const ResultsView: React.FC<ResultsViewProps> = ({
   result,
   onCopyAll,
@@ -42,7 +48,35 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   onOpenAll,
   onDownloadFile,
 }) => {
-  // Copy all APA 6 references
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const totalPages = Math.ceil(result.references.length / ITEMS_PER_PAGE);
+
+  const paginatedReferences = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return result.references.slice(start, start + ITEMS_PER_PAGE);
+  }, [result.references, currentPage]);
+
+  const goToPage = (page: number) => {
+    setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+  };
+
+  const visiblePages = useMemo(() => {
+    const pages: (number | '...')[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (currentPage > 3) pages.push('...');
+      for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
+        pages.push(i);
+      }
+      if (currentPage < totalPages - 2) pages.push('...');
+      pages.push(totalPages);
+    }
+    return pages;
+  }, [currentPage, totalPages]);
+
   const copyAllAPA = () => {
     const apaList = result.references
       .filter(r => r.apa6)
@@ -60,7 +94,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
             <CheckCircle2 size={28} />
           </div>
           <div className="flex-1 min-w-0">
-            <h2 
+            <h2
               className="text-xl font-bold text-slate-800 line-clamp-1"
               dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(result.paperTitle || "Analysis Complete") }}
             />
@@ -68,9 +102,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button 
-            variant="ghost" 
-            onClick={copyAllAPA} 
+          <Button
+            variant="ghost"
+            onClick={copyAllAPA}
             className={`font-bold ${copiedId === 'copy-all-apa' ? 'text-green-600 bg-green-50' : 'text-indigo-600 hover:bg-indigo-50'}`}
           >
             {copiedId === 'copy-all-apa' ? <ClipboardCheck size={18} /> : <BookOpen size={18} />}
@@ -107,17 +141,20 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
       {/* Reference List */}
       <div className="grid grid-cols-1 gap-6">
-        {result.references.length > 0 ? (
-          result.references.map((item, idx) => (
-            <ReferenceCard 
-              key={idx}
-              item={item}
-              index={idx}
-              onCopy={onCopy}
-              copiedId={copiedId}
-              getSciHubLink={getSciHubLink}
-            />
-          ))
+        {paginatedReferences.length > 0 ? (
+          paginatedReferences.map((item, idx) => {
+            const globalIndex = (currentPage - 1) * ITEMS_PER_PAGE + idx;
+            return (
+              <ReferenceCard
+                key={globalIndex}
+                item={item}
+                index={globalIndex}
+                onCopy={onCopy}
+                copiedId={copiedId}
+                getSciHubLink={getSciHubLink}
+              />
+            );
+          })
         ) : (
           <div className="bg-white py-20 rounded-[2.5rem] border border-slate-100 text-center flex flex-col items-center">
             <div className="bg-slate-50 p-6 rounded-full mb-4 text-slate-300">
@@ -128,6 +165,69 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm">
+          <p className="text-sm text-slate-500 font-medium">
+            Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, result.references.length)} of {result.references.length}
+          </p>
+
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => goToPage(1)}
+              disabled={currentPage === 1}
+              className="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              aria-label="First page"
+            >
+              <ChevronsLeft size={18} />
+            </button>
+            <button
+              onClick={() => goToPage(currentPage - 1)}
+              disabled={currentPage === 1}
+              className="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              aria-label="Previous page"
+            >
+              <ChevronLeft size={18} />
+            </button>
+
+            {visiblePages.map((page, i) =>
+              page === '...' ? (
+                <span key={`ellipsis-${i}`} className="px-2 text-slate-400 text-sm">…</span>
+              ) : (
+                <button
+                  key={page}
+                  onClick={() => goToPage(page)}
+                  className={`min-w-[36px] h-9 rounded-lg text-sm font-semibold transition-colors ${
+                    currentPage === page
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-slate-600 hover:bg-indigo-50 hover:text-indigo-600'
+                  }`}
+                >
+                  {page}
+                </button>
+              )
+            )}
+
+            <button
+              onClick={() => goToPage(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              className="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              aria-label="Next page"
+            >
+              <ChevronRight size={18} />
+            </button>
+            <button
+              onClick={() => goToPage(totalPages)}
+              disabled={currentPage === totalPages}
+              className="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              aria-label="Last page"
+            >
+              <ChevronsRight size={18} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Batch Actions */}
       {result.references.length > 0 && (
@@ -144,17 +244,17 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
               Export all references at once or open all download links in new tabs.
             </p>
             <div className="flex flex-wrap gap-4">
-              <Button 
-                variant="primary" 
+              <Button
+                variant="primary"
                 className="bg-white text-indigo-900 hover:bg-indigo-50 border-none px-8 py-4 rounded-2xl font-bold shadow-xl"
                 onClick={onOpenAll}
               >
                 <OpenIcon size={20} />
                 Open All Downloads ({result.references.length})
               </Button>
-              
-              <Button 
-                variant="secondary" 
+
+              <Button
+                variant="secondary"
                 className="bg-indigo-800 text-white border-indigo-700 hover:bg-indigo-700 px-8 py-4 rounded-2xl font-bold"
                 onClick={() => {
                   const apaContent = result.references
@@ -168,11 +268,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                 Export APA 6 References
               </Button>
 
-              <Button 
-                variant="secondary" 
+              <Button
+                variant="secondary"
                 className="bg-indigo-800 text-white border-indigo-700 hover:bg-indigo-700 px-8 py-4 rounded-2xl font-bold"
                 onClick={() => {
-                  const risContent = result.references.map(r => 
+                  const risContent = result.references.map(r =>
                     `TY  - JOUR\nTI  - ${r.title}\nDO  - ${r.doi}${r.authors ? '\n' + r.authors.map(a => `AU  - ${a}`).join('\n') : ''}${r.year ? `\nPY  - ${r.year}` : ''}${r.journal ? `\nJO  - ${r.journal}` : ''}${r.volume ? `\nVL  - ${r.volume}` : ''}${r.issue ? `\nIS  - ${r.issue}` : ''}${r.pages ? `\nSP  - ${r.pages}` : ''}\nUR  - https://doi.org/${r.doi}\nER  - `
                   ).join('\n\n');
                   onDownloadFile(risContent, 'references.ris', 'text/plain');
@@ -182,12 +282,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                 Export RIS (Zotero/Mendeley)
               </Button>
 
-              <Button 
-                variant="ghost" 
+              <Button
+                variant="ghost"
                 className="text-indigo-200 hover:bg-white/10 px-8 py-4 rounded-2xl"
                 onClick={() => {
-                  const text = result.references.map((r, i) => 
-                    `[${i+1}] ${r.apa6 || r.title}\n    Download: ${getSciHubLink(r.doi)}`
+                  const text = result.references.map((r, i) =>
+                    `[${i + 1}] ${r.apa6 || r.title}\n    Download: ${getSciHubLink(r.doi)}`
                   ).join('\n\n');
                   onDownloadFile(text, 'reading_list.txt', 'text/plain');
                 }}

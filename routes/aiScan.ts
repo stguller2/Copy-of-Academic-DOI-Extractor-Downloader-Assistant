@@ -22,6 +22,54 @@ let initRetries = 0;
 const MAX_RETRIES = 5;
 
 /**
+ * In-Memory Metadata Cache (LRU + TTL)
+ * Prevents redundant API calls for the same DOI within a time window.
+ */
+interface CacheEntry {
+  data: any;
+  expiresAt: number;
+}
+
+class MetadataCache {
+  private store = new Map<string, CacheEntry>();
+  private maxSize: number;
+  private ttlMs: number;
+
+  constructor(maxSize = 500, ttlMs = 10 * 60 * 1000) {
+    this.maxSize = maxSize;
+    this.ttlMs = ttlMs;
+  }
+
+  get(key: string): any | null {
+    const entry = this.store.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.store.delete(key);
+      return null;
+    }
+    // LRU: move to end
+    this.store.delete(key);
+    this.store.set(key, entry);
+    return entry.data;
+  }
+
+  set(key: string, data: any): void {
+    if (this.store.size >= this.maxSize) {
+      // Evict oldest (first) entry
+      const firstKey = this.store.keys().next().value;
+      if (firstKey) this.store.delete(firstKey);
+    }
+    this.store.set(key, { data, expiresAt: Date.now() + this.ttlMs });
+  }
+
+  get stats() {
+    return { size: this.store.size, maxSize: this.maxSize };
+  }
+}
+
+const metadataCache = new MetadataCache(500, 10 * 60 * 1000); // 500 entries, 10 min TTL
+
+/**
  * Queue Management:
  * Ensures we don't overwhelm the local LLM with multiple concurrent requests.
  */
@@ -260,7 +308,15 @@ function parseOpenAlexAuthors(authorships: any[]): string[] {
  */
 async function fetchSingleDOIMetadata(ref: { title: string; doi: string }): Promise<any> {
   const cleanDoi = ref.doi.trim();
-  
+  const cacheKey = cleanDoi.toLowerCase();
+
+  // Check cache first
+  const cached = metadataCache.get(cacheKey);
+  if (cached) {
+    logger.debug({ doi: cleanDoi }, 'Metadata cache hit');
+    return cached;
+  }
+
   // Parallel fetch from both APIs
   const results = await Promise.allSettled([
     axios.get(`https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`, {
@@ -326,35 +382,41 @@ async function fetchSingleDOIMetadata(ref: { title: string; doi: string }): Prom
   const meta = { title, doi: cleanDoi, authors, year, journal, volume, issue, pages };
   const apa6 = formatAPA6(meta);
 
-  return { 
+  const enrichedResult = {
     ...meta,
     apa6,
-    isVerified, 
+    isVerified,
     source: isVerified ? 'official' as const : 'regex' as const
   };
+
+  // Cache the result
+  metadataCache.set(cacheKey, enrichedResult);
+
+  return enrichedResult;
 }
 
 /**
  * Process DOIs in controlled batches to avoid overwhelming the APIs
+ * Optimized: Crossref supports 50+ req/s, OpenAlex 100 req/min
  */
 async function processInBatches<T>(
-  items: any[], 
-  processor: (item: any) => Promise<T>, 
-  batchSize: number = 5
+  items: any[],
+  processor: (item: any) => Promise<T>,
+  batchSize: number = 10
 ): Promise<T[]> {
   const results: T[] = [];
-  
+
   for (let i = 0; i < items.length; i += batchSize) {
     const batch = items.slice(i, i + batchSize);
     const batchResults = await Promise.all(batch.map(processor));
     results.push(...batchResults);
-    
-    // Small delay between batches to be polite to APIs
+
+    // Small delay between batches (100ms for Crossref/ OpenAlex politeness)
     if (i + batchSize < items.length) {
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
-  
+
   return results;
 }
 
@@ -370,11 +432,11 @@ router.post('/refine', async (req, res) => {
     
     logger.info({ count: validated.references.length }, 'Refining references with metadata APIs');
     
-    // Process in batches of 5 to avoid API throttling
+    // Process in batches of 10 (optimized for Crossref/OpenAlex rate limits)
     const cleanReferences = await processInBatches(
       validated.references.slice(0, 100),
       fetchSingleDOIMetadata,
-      5
+      10
     );
 
     const verifiedCount = cleanReferences.filter(r => r.isVerified).length;
