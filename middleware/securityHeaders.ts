@@ -9,7 +9,7 @@ export const securityHeaders = helmet({
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "https://picsum.photos"],
-      connectSrc: ["'self'", "blob:"],
+      connectSrc: ["'self'", "blob:", "ws:", "wss:"],
       frameAncestors: ["*"],
       upgradeInsecureRequests: [],
     },
