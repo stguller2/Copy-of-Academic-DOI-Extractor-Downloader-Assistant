@@ -10,7 +10,6 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^1.50.1",
     "@types/cookie-parser": "1.4.8",
     "@types/cors": "2.8.17",
     "@types/dompurify": "3.0.5",
@@ -30,7 +29,8 @@
     "lucide-react": "0.563.0",
     "motion": "12.38.0",
     "node-llama-cpp": "^3.18.1",
-    "pdfjs-dist": "^4.4.168",
+    "ora": "^6.3.1",
+    "pdfjs-dist": "^3.11.174",
     "pino": "9.6.0",
     "pino-http": "10.3.0",
     "react": "19.2.3",
