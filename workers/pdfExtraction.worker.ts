@@ -190,10 +190,10 @@ const extractDoisFromPdf = async (
 
 // Web Worker message handler
 self.onmessage = async (event: MessageEvent) => {
-  const { base64Pdf } = event.data;
+  const { base64 } = event.data;
 
   try {
-    const result = await extractDoisFromPdf(base64Pdf, (progress, message) => {
+    const result = await extractDoisFromPdf(base64, (progress, message) => {
       self.postMessage({ type: 'progress', progress, message });
     });
 
