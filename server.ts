@@ -30,7 +30,7 @@ app.use(cors({
 app.use(cookieParser(env.SESSION_SECRET));
 
 // 3. Rate Limiting & Parsing
-app.use(globalLimiter);
+app.use('/api', globalLimiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -55,19 +55,9 @@ app.get('/api/metrics', (req, res) => {
   res.json({ uptime: process.uptime(), memory: process.memoryUsage() });
 });
 
-// API 404 Handler - Express 5 syntax (named wildcard)
+// API 404 Handler
 app.use('/api/{*path}', (req, res) => {
   res.status(404).json({ error: `API route not found: ${req.originalUrl}` });
-});
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const errorId = req.id || 'unknown';
-  logger.error({ error_id: errorId, message: err.message, stack: env.NODE_ENV === 'development' ? err.stack : undefined }, 'Unhandled Error');
-  
-  res.status(err.status || 500).json({
-    error: 'Internal Server Error',
-    id: errorId,
-    message: env.NODE_ENV === 'development' ? err.message : 'A generic error occurred. Please contact support.'
-  });
 });
 
 async function startServer() {
@@ -83,11 +73,23 @@ async function startServer() {
     app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
+  // Global Error Handler MUST be after Vite so it catches Vite's errors if any
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const errorId = req.id || 'unknown';
+    logger.error({ error_id: errorId, message: err.message, stack: env.NODE_ENV === 'development' ? err.stack : undefined }, 'Unhandled Error');
+    
+    res.status(err.status || 500).json({
+      error: 'Internal Server Error',
+      id: errorId,
+      message: env.NODE_ENV === 'development' ? err.message : 'A generic error occurred. Please contact support.'
+    });
+  });
+
   app.listen(env.PORT, () => {
     logger.info({ port: env.PORT, env: env.NODE_ENV }, 'Server started');
-    // Start background model initialization
     initializeLocalModel().catch(err => logger.error({ err }, 'Background Init Failed'));
   });
 }
 
 startServer();
+

@@ -267,10 +267,6 @@ async function streamPdf(pdfUrl: string, doi: string, res: express.Response): Pr
         return resolve(false);
       }
 
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('Content-Disposition', `attachment; filename="${doi.replace(/\//g, '_')}.pdf"`);
-
       let firstChunk = true;
       let errorOccurred = false;
 
@@ -279,6 +275,9 @@ async function streamPdf(pdfUrl: string, doi: string, res: express.Response): Pr
           firstChunk = false;
           if (chunk.length >= 5 && chunk.toString('utf8', 0, 5) === '%PDF-') {
             magicValidated = true;
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.setHeader('Content-Disposition', `attachment; filename="${doi.replace(/\//g, '_')}.pdf"`);
           } else {
             errorOccurred = true;
             logger.warn({ pdfUrl, doi }, 'Downloaded stream failed magic byte validation');

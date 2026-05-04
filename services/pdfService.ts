@@ -1,19 +1,16 @@
 
 import * as pdfjs from 'pdfjs-dist';
 
-// Use Vite's built-in worker loader for maximum compatibility in the preview environment.
-// This bundles the worker and avoids "Failed to fetch dynamically imported module" errors.
+// Use CDN for PDF.js worker to guarantee it loads without Vite bundling issues
 // @ts-ignore
-import PDFWorker from 'pdfjs-dist/build/pdf.worker.mjs?worker';
-
-// @ts-ignore
-pdfjs.GlobalWorkerOptions.workerPort = new PDFWorker();
+pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 import { ExtractionResult, ReferenceItem } from "../types";
 
 // Helper to convert base64 to Uint8Array safely
 const base64ToUint8Array = (base64: string) => {
-  const binaryString = window.atob(base64);
+  // atob is available globally in both browser and web worker contexts
+  const binaryString = atob(base64);
   const len = binaryString.length;
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) {
@@ -116,6 +113,7 @@ export const extractDoisFromPdf = async (
   const extractionPromise = (async () => {
     try {
       onProgress?.(5, 'Decoding PDF data...');
+
       const data = base64ToUint8Array(base64);
 
       onProgress?.(10, 'Validating PDF format...');
@@ -130,10 +128,14 @@ export const extractDoisFromPdf = async (
         useSystemFonts: true,
         stopAtErrors: false,
         disableFontFace: false,
-        useWorkerFetch: true,
+        useWorkerFetch: false,
+        cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+        cMapPacked: true,
       });
 
+      console.log('PDFService: getDocument called');
       const pdf = await loadingTask.promise;
+      console.log('PDFService: getDocument resolved. Total pages:', pdf.numPages);
 
       const totalPages = Math.min(pdf.numPages, 150);
 
@@ -141,8 +143,14 @@ export const extractDoisFromPdf = async (
 
       let fullText = "";
       let paperTitle = "Extracted Document";
+      const startTime = Date.now();
 
       for (let i = 1; i <= totalPages; i++) {
+        // Timeout check inside loop
+        if (Date.now() - startTime > 30000) {
+          throw new Error("Extraction timeout after 30 seconds");
+        }
+
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
 
@@ -198,9 +206,16 @@ export const extractDoisFromPdf = async (
         rawText: bibliographyText
       };
     } catch (error: any) {
+      console.error('PDFService: Error caught in extractionPromise', error);
       throw error;
     }
   })();
 
-  return Promise.race([extractionPromise, timeoutPromise]) as Promise<ExtractionResult>;
+  return Promise.race([extractionPromise, timeoutPromise]).then(res => {
+    console.log('PDFService: Promise.race resolved');
+    return res;
+  }).catch(err => {
+    console.error('PDFService: Promise.race rejected', err);
+    throw err;
+  }) as Promise<ExtractionResult>;
 };

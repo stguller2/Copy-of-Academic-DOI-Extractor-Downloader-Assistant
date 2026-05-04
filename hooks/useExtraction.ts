@@ -51,6 +51,10 @@ export const useExtraction = () => {
 
     try {
       const reader = new FileReader();
+      reader.onerror = () => {
+        setError("Failed to read file from disk.");
+        setAppState(AppState.ERROR);
+      };
       reader.onload = async () => {
         const fileContent = reader.result;
         if (typeof fileContent !== 'string') return;
